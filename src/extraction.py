@@ -1,4 +1,3 @@
-# Placeholder for extraction.py
 import subprocess
 import os
 from docx import Document

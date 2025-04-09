@@ -1,5 +1,4 @@
 streamlit
 pandas
-python-docx
 PyPDF2
-streamlit-aggrid
+python-docx
