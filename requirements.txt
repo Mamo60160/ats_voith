@@ -1,4 +1,6 @@
-streamlit
-pandas
-PyPDF2
-python-docx
+streamlit==1.30.0
+pandas==2.2.1
+python-docx==1.1.2
+PyMuPDF==1.23.22
+st-aggrid==0.3.4
+pdftotext==2.2.2
