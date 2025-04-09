@@ -13,18 +13,17 @@ st.set_page_config(page_title="ATS - Analyse de CV", layout="wide")
 st.title("📄 Système ATS – Analyse et tri des candidatures")
 st.sidebar.header("🛠️ Filtres de sélection")
 
-# Nettoyage du dossier data au démarrage
 if os.path.exists("data"):
     shutil.rmtree("data")
 os.makedirs("data", exist_ok=True)
 
-# Upload
 zip_file = st.file_uploader("📦 Importez un ZIP contenant vos CVs (PDF ou DOCX)", type=["zip"])
 uploaded_files = []
 
 if zip_file:
     with zipfile.ZipFile(BytesIO(zip_file.read()), "r") as zip_ref:
         zip_ref.extractall("data")
+
     for root, _, files in os.walk("data"):
         for filename in files:
             if filename.lower().endswith((".pdf", ".docx")):
@@ -35,110 +34,161 @@ if uploaded_files:
     st.info(f"📁 {len(uploaded_files)} CVs détectés. Analyse en cours...")
     progress = st.progress(0)
 
-    for idx, path in enumerate(uploaded_files):
-        name = os.path.basename(path)
-        text = extract_text_from_pdf(path) if path.endswith(".pdf") else extract_text_from_docx(path)
-        candidates.append({"name": name, "text": text})
+    for idx, file_path in enumerate(uploaded_files):
+        file_name = os.path.basename(file_path)
+        text = extract_text_from_pdf(file_path) if file_path.lower().endswith(".pdf") else extract_text_from_docx(file_path)
+        candidates.append({"name": file_name, "text": text})
         progress.progress((idx + 1) / len(uploaded_files))
 
-    df = pd.DataFrame(candidates)
+    candidates_df = pd.DataFrame(candidates)
 
-    # Filtres dans la sidebar
-    st.sidebar.markdown("### 🔍 Filtres actifs")
-    use_skills = st.sidebar.checkbox("Compétences", value=False)
-    use_english = st.sidebar.checkbox("Niveau d'anglais", value=False)
-    use_experience = st.sidebar.checkbox("Expérience", value=False)
-    use_transport = st.sidebar.checkbox("Transport", value=False)
-    use_car = st.sidebar.checkbox("Voiture", value=False)
+    # Filtres
+    st.sidebar.markdown("### 🔧 Filtres")
+    use_skills = st.sidebar.checkbox("🔍 Par compétences", value=False)
+    use_english = st.sidebar.checkbox("🇬🇧 Par niveau d'anglais", value=False)
+    use_experience = st.sidebar.checkbox("📊 Par expérience", value=False)
+    use_transport = st.sidebar.checkbox("🚇 Par transport", value=False)
+    use_car = st.sidebar.checkbox("🚗 Par voiture", value=False)
 
-    skills = st.sidebar.text_area("Compétences clés", "Python, SQL, React").split(",")
-    skills = [s.strip() for s in skills if s.strip()]
-    min_english = st.sidebar.selectbox("Niveau anglais min", ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
-    badge = st.sidebar.selectbox("Badge anglais requis", ["Tous", "🔴 Non précisé", "🟡 Mentionné", "🟢 Niveau"], index=0)
-    min_exp = st.sidebar.slider("Expérience min (années)", 0, 10, 2)
-    max_trans = st.sidebar.slider("Transport max (min)", 0, 120, 45)
-    max_car = st.sidebar.slider("Voiture max (min)", 0, 120, 60)
+    skill_keywords = st.sidebar.text_area("Compétences requises", "Python, SQL, React").split(",")
+    skill_keywords = [s.strip() for s in skill_keywords if s.strip()]
+    english_required = st.sidebar.selectbox("Niveau d'anglais minimum", ["A1", "A2", "B1", "B2", "C1", "C2"], index=2)
+    badge_selected = st.sidebar.selectbox("Badge anglais requis", ["Tous", "🔴 Non précisé", "🟡 Mentionné", "🟢 Niveau"], index=0)
+    min_experience = st.sidebar.slider("Expérience minimum (années)", 0, 10, 2)
+    max_commute_transport = st.sidebar.slider("Temps max en transport (min)", 0, 120, 45)
+    max_commute_car = st.sidebar.slider("Temps max en voiture (min)", 0, 120, 60)
 
-    # Enrichissement
-    enriched = enrich_candidates_data(df, skills)
+    # Enrichissement + filtrage
+    enriched = enrich_candidates_data(candidates_df, skill_keywords)
     enriched["statut"] = "🕐 En attente"
 
-    # Filtrage
+    if "updated_df" not in st.session_state:
+        st.session_state["updated_df"] = enriched.copy()
+
     filtered = filter_candidates(
-        enriched, skills,
-        min_english_level=min_english,
-        min_experience=min_exp,
-        max_commute_transport=max_trans,
-        max_commute_car=max_car,
+        enriched,
+        skill_keywords,
+        min_english_level=english_required,
+        min_experience=min_experience,
+        max_commute_transport=max_commute_transport,
+        max_commute_car=max_commute_car,
         use_skills=use_skills,
         use_english=use_english,
         use_experience=use_experience,
         use_transport=use_transport,
         use_car=use_car,
-        english_badge_filter=badge
+        english_badge_filter=badge_selected
     )
 
-    # Gestion du DataFrame mis à jour avec statuts conservés
-    if "updated_df" not in st.session_state:
-        st.session_state.updated_df = filtered.copy()
-    else:
-        current_names = set(filtered["name"])
-        current_df = st.session_state.updated_df
-        current_df = current_df[current_df["name"].isin(current_names)]
-        new_entries = filtered[~filtered["name"].isin(current_df["name"])]
-        st.session_state.updated_df = pd.concat([current_df, new_entries], ignore_index=True)
+    # Met à jour les statuts des candidats dans session_state
+    updated_df = st.session_state["updated_df"]
+    for name in filtered["name"]:
+        if name not in updated_df["name"].values:
+            new_row = enriched[enriched["name"] == name]
+            updated_df = pd.concat([updated_df, new_row], ignore_index=True)
 
-    updated_df = st.session_state.updated_df
+    # Masquer colonne texte à l'affichage
+    display_df = updated_df[updated_df["name"].isin(filtered["name"])].copy()
+    if "text" in display_df.columns:
+        display_df.drop("text", axis=1, inplace=True)
 
-    # Affichage du tableau AgGrid
-    st.subheader("📋 Liste des candidatures")
-    gb = GridOptionsBuilder.from_dataframe(updated_df.drop(columns=["text"]))
-    gb.configure_selection('multiple', use_checkbox=True)
-    gb.configure_column("statut", editable=True, cellEditor='agSelectCellEditor',
-                        cellEditorParams={'values': ['✅ Sélectionné', '❌ Rejeté', '🕐 En attente']})
-    grid_response = AgGrid(
-        updated_df.drop(columns=["text"]),
-        gridOptions=gb.build(),
-        update_mode=GridUpdateMode.MODEL_CHANGED,
-        height=500,
-        allow_unsafe_jscode=True,
-        theme="alpine"
+    # 📊 Statistiques
+    st.markdown("### 📈 Statistiques en temps réel")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("✅ Sélectionnés", len(updated_df[updated_df["statut"] == "✅ Sélectionné"]))
+    col2.metric("❌ Rejetés", len(updated_df[updated_df["statut"] == "❌ Rejeté"]))
+    col3.metric("🕐 En attente", len(updated_df[updated_df["statut"] == "🕐 En attente"]))
+
+    # Boutons d'action globale
+    col_a, col_b = st.columns(2)
+    if col_a.button("✅ Sélectionner tous les candidats filtrés"):
+        updated_df.loc[updated_df["name"].isin(filtered["name"]), "statut"] = "✅ Sélectionné"
+        st.session_state["updated_df"] = updated_df
+        st.rerun()
+
+    if col_b.button("❌ Rejeter tous les candidats filtrés"):
+        updated_df.loc[updated_df["name"].isin(filtered["name"]), "statut"] = "❌ Rejeté"
+        st.session_state["updated_df"] = updated_df
+        st.rerun()
+
+    # Affichage dynamique
+    colonnes_utiles = [
+        "statut",            # Statut du candidat (sélectionné, en attente, rejeté)
+      "name",              # Nom du fichier CV
+      "score",             # Score basé sur les compétences détectées
+     "english_badge",     # Badge anglais (🔴, 🟡, 🟢)
+      "has_experience",    # Est-ce qu’il y a de l’expérience ?
+      "experience_types",  # Type d’expériences trouvées (Stage, CDI, etc.)
+      "experience_count",  # Nombre d’expériences détectées
+      "experience_detail", # Détail de la première ligne détectée
+        "localisation_match",
+       "location",          # Ville détectée dans le CV
+      "temps_trajet"       # Temps de trajet (Transport/Voiture)
+]
+
+# Filtrage des colonnes existantes (sécurité)
+    colonnes_utiles = [col for col in colonnes_utiles if col in display_df.columns]
+
+# Affichage propre
+    st.dataframe(display_df[colonnes_utiles])
+
+
+
+      # 📥 Exporter le tableau affiché tel quel (sans la colonne text)
+    st.markdown("### 📥 Exporter ce tableau (CSV)")
+    export_df = display_df[colonnes_utiles]  # Utilise exactement les mêmes colonnes que le tableau affiché
+    csv_export = export_df.to_csv(index=False, sep=";", encoding="utf-8-sig")
+    st.download_button(
+        label="⬇️ Télécharger ce tableau en CSV",
+        data=csv_export,
+        file_name="tableau_candidatures.csv",
+        mime="text/csv"
     )
-    selected_rows = grid_response["selected_rows"]
-    updated_df = grid_response["data"]
-    st.session_state.updated_df = updated_df
 
-    # Actions groupées
-    st.subheader("🛠️ Actions groupées")
-    col1, col2, col3, col4 = st.columns(4)
-    if col1.button("✅ Marquer sélectionnés"):
-        for row in selected_rows:
-            updated_df.loc[updated_df["name"] == row["name"], "statut"] = "✅ Sélectionné"
-        st.rerun()
-    if col2.button("❌ Marquer rejetés"):
-        for row in selected_rows:
-            updated_df.loc[updated_df["name"] == row["name"], "statut"] = "❌ Rejeté"
-        st.rerun()
-    if col3.button("🕐 Marquer en attente"):
-        for row in selected_rows:
-            updated_df.loc[updated_df["name"] == row["name"], "statut"] = "🕐 En attente"
-        st.rerun()
-    if col4.button("♻️ Réinitialiser"):
-        updated_df["statut"] = "🕐 En attente"
-        st.rerun()
 
-    # Statistiques
-    st.subheader("📊 Statistiques")
-    st.markdown(f"- ✅ Sélectionnés : {len(updated_df[updated_df['statut'] == '✅ Sélectionné'])}")
-    st.markdown(f"- ❌ Rejetés : {len(updated_df[updated_df['statut'] == '❌ Rejeté'])}")
-    st.markdown(f"- 🕐 En attente : {len(updated_df[updated_df['statut'] == '🕐 En attente'])}")
+# 📚 Guide d'utilisation de l'ATS
+with st.expander("📘 Guide d'utilisation de l'ATS"):
+    st.markdown("""
+## 📄 Système ATS – Guide Utilisateur
 
-    # Filtres d’affichage par statut
-    st.subheader("🔎 Affichage par statut")
-    choix = st.radio("Filtrer :", ["Tous", "✅ Sélectionné", "❌ Rejeté", "🕐 En attente"])
-    to_show = updated_df if choix == "Tous" else updated_df[updated_df["statut"] == choix]
-    st.dataframe(to_show)
+Ce système vous permet de filtrer, trier et suivre les candidatures de façon efficace.
 
-    # Téléchargement CSV sélectionnés uniquement
-    csv = updated_df[updated_df["statut"] == "✅ Sélectionné"].to_csv(index=False)
-    st.download_button("⬇️ Télécharger les ✅ sélectionnés (.csv)", csv, file_name="candidats_selectionnes.csv", mime="text/csv")
+### 🧩 Étapes d'utilisation
+
+1. **Importer les CVs :**
+   - Chargez un fichier ZIP contenant des fichiers PDF ou DOCX via l’interface.
+   - Les fichiers seront automatiquement analysés.
+
+2. **Appliquer des filtres (barre latérale) :**
+   - 🔍 Par compétences (mots-clés)
+   - 🇬🇧 Par niveau d’anglais
+   - 📊 Par expérience
+   - 🚇 Temps max en transport
+   - 🚗 Temps max en voiture
+
+3. **Analyser les résultats :**
+   - Le tableau affiche tous les candidats enrichis (score, anglais, ville, expérience...).
+   - Vous pouvez modifier leur statut via le tableau.
+
+4. **Suivre les statuts :**
+   - ✅ Sélectionné
+   - ❌ Rejeté
+   - 🕐 En attente
+
+5. **Exporter les résultats :**
+   - 📤 Télécharger tous les candidats filtrés au format CSV.
+   - Les CVs rejetés peuvent être restaurés.
+
+### 📈 Astuces
+
+- Le tableau est interactif : vous pouvez modifier les statuts en direct.
+- Les statuts sont sauvegardés dynamiquement pendant la session.
+- Cliquez sur les boutons pour filtrer visuellement par statut.
+
+### ℹ️ À savoir
+
+- Le champ `text` est caché à l'affichage pour ne pas encombrer la vue.
+- Le bouton d’export CSV génère un tableau lisible sans décalage.
+
+---
+""")
