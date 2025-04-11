@@ -2,3 +2,4 @@ streamlit==1.30.0
 pandas==2.2.0
 numpy
 pdfminer.six
+st-aggrid==0.3.4
