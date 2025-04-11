@@ -4,7 +4,6 @@ import os
 import shutil
 import zipfile
 from io import BytesIO
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
 from extraction import extract_text_from_pdf, extract_text_from_docx
 from scoring import filter_candidates, enrich_candidates_data
 from collections import Counter
